@@ -30,16 +30,15 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
       className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
-      {/* Container: translucent tile (blur removed for perf — blur × 8+ icons stalls launcher) */}
+      {/* Container: iOS style squircle */}
       <div className={`${sizeClasses} relative flex items-center justify-center
-        bg-white/40 rounded-[1.125rem]
-        border border-white/35
+        rounded-[22.5%] overflow-hidden
         shadow-[0_4px_12px_rgba(0,0,0,0.16)]
-        group-hover:bg-white/50 group-hover:border-white/50
+        ${!customIconUrl ? 'bg-white/40 group-hover:bg-white/50' : ''}
       `}>
 
         {customIconUrl ? (
-            <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} loading="lazy" />
+            <img src={customIconUrl} className="w-full h-full object-cover" alt={app.name} loading="lazy" />
         ) : (
             <div 
                 className="w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90"

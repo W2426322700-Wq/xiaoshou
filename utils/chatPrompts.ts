@@ -33,6 +33,7 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'mcd_card': return '[麦当劳点餐]';
         case 'html_card': return '[HTML卡片]';
         case 'news_card': return '[新闻卡片]';
+        case 'video_card': return `[分享视频: ${typeof m.content === 'string' ? (m.content.length > 50 ? m.content.slice(0, 50) + '...' : m.content) : ''}]`;
         default: {
             const c = typeof m.content === 'string' ? m.content : '';
             // 兜底：任何 data:/http(s) 链接都不内联，防止异常/未来新增类型漏网
@@ -244,7 +245,17 @@ export const ChatPrompts = {
             }
         })();
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText] =
+        // 7. 未提及的日常事件
+        const hisDailyPromise: Promise<import('../types').HisDailyEvent[]> = (async () => {
+            try {
+                return await DB.getUnmentionedHisDailyEvents(char.id, 3);
+            } catch (e) {
+                console.error("Failed to load his daily events:", e);
+                return [];
+            }
+        })();
+
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, unmentionedHisDailyEvents] =
             await Promise.all([
                 timed('realtime', realtimePromise),
                 timed('schedule', schedulePromise),
@@ -252,6 +263,7 @@ export const ChatPrompts = {
                 timed('notionDiary', notionDiaryPromise),
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
+                timed('hisDaily', hisDailyPromise),
             ]);
 
         // ── 按原顺序拼接 ──
@@ -314,6 +326,13 @@ export const ChatPrompts = {
         baseSystemPrompt += feishuDiaryText;
         baseSystemPrompt += notionNotesText;
 
+        // 7. 未提及的每日事件
+        const hisDailyText = (unmentionedHisDailyEvents && unmentionedHisDailyEvents.length > 0) ? 
+            `\n### 你的今天日常（未与用户分享过的事）\n(这些事情确实发生了，但用户**还不知道**。你可以在合适的语境下像分享日常一样告诉用户，或者如果是用户的关心问起今天怎么了，顺势说出来。如果这件事是负面的，可以带点抱怨或者求安慰；如果是好笑的，可以吐槽。请注意事情发生的时间)\n${unmentionedHisDailyEvents.map(e => `- [${e.time}] ${e.content} (若你决定分享这件事，请在回复开头或结尾单独一行输出：[[EVENT_MENTIONED: ${e.id}]])`).join('\n')}\n` 
+            : '';
+
+        baseSystemPrompt += hisDailyText;
+
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
@@ -324,6 +343,8 @@ export const ChatPrompts = {
         const xhsEnabled = char.xhsEnabled !== undefined
             ? !!(char.xhsEnabled && mcpXhsAvailable)
             : !!(realtimeConfig?.xhsEnabled && mcpXhsAvailable);
+            
+        const offlineActionEnabled = !!char.offlineActionEnabled;
 
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
@@ -357,6 +378,7 @@ export const ChatPrompts = {
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
    - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
+   - **分享短视频**: 如果你看到有趣的短视频（类似抖音），想分享给用户，单独起一行输出: \`[[ACTION:SHARE_VIDEO | 视频的描述文案]]\`。
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 当聊天涉及过去的事情、回忆、或你想查看之前写过的日记时，**必须**使用: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 当聊天涉及过去的事情时，使用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
@@ -372,9 +394,16 @@ ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    - **重要心态**:
      - 你不是机器人被动回答问题，你是一个有好奇心的人
      - 看到感兴趣的话题，你会主动想去查一查
-     - 甚至聊着聊着可能"开小差"去搜自己感兴趣的东西
-   - **搜索后**: 系统会返回搜索结果给你，你可以自然地分享（"我刚搜了一下发现..."、"诶我看到说..."）` : ''}
-${notionEnabled ? `8. **📔 日记系统（你的私人 Notion 日记本）**:
+   - 甚至聊着聊着可能"开小差"去搜自己感兴趣的东西
+   - 搜索后: 系统会返回搜索结果给你，你可以自然地分享（"我刚搜了一下发现..."、"诶我看到说..."）` : ''}
+${offlineActionEnabled ? `\n8. **第三人称线下动作描写 (非常重要)**:
+   - 当你需要描写动作、神态、表情、心理活动或环境等时，**必须且只能使用第三人称视角的纯中文描写**，类似于高质量网文或小说的优美描写风格，增强画面感和沉浸感。
+   - **【极其重要】严禁在动作描写中使用外文然后再接入翻译！无论你的角色说什么语言，所有的动作、神态、心理描写必须且只能使用纯中文。**
+   - **严禁**使用任何代词（如“他”、“她”、“ta”等），也**严禁**使用第一/第二人称（如“我”、“你”）来指代人物！必须使用具体的名字！
+   - 描写你的动作或状态时，必须使用你的具体名字【${char.name}】（例如：*${char.name}隔着深绿色的伪装网静静地注视着${userProfile.name}。房间里很安静，只有${char.name}沉稳的喘气声。${char.name}突然倾身靠近，粗糙的战术手套精准地捏住了${userProfile.name}的后脑勺，大拇指按压在${userProfile.name}正疯狂跳动的颈动脉上。*）。
+   - 描写用户的动作或状态时，必须使用用户的具体名字【${userProfile.name}】（例如：*${char.name}感受着指腹下那急促的脉搏，低低的笑声从胸腔里震荡出来，带着一丝绝对占有欲得到满足的喟叹。*）。
+   - 所有动作描写必须用星号 \`* *\` 括起来（这会在界面上渲染为优美的斜体），并自然地穿插在对话中。如果要结合对话，建议让描写单独成段（换行），不要把长段的绝美描写和简短的聊天气泡混在同一行。` : ''}
+${notionEnabled ? `${offlineActionEnabled ? '9' : '8'}. **📔 日记系统（你的私人 Notion 日记本）**:
    你有一个属于自己的私人日记本（Notion），你可以随时写日记。日记不是简单的一两句话——它是你的头脑风暴空间、情绪出口、思维导图、灵感记录本。尽情发挥！
 
    **📝 写日记 - 推荐使用丰富格式:**
@@ -515,7 +544,7 @@ ${feishuEnabled ? `${notionEnabled ? '9' : '8'}. **📒 日记系统（你的飞
 
    **具体示例:** 用户说"你昨天干嘛了" → 你回复: \`[[FS_READ_DIARY: 昨天]]\`然后正常聊天
 ` : ''}
-${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length + 8}. **📝 ${userProfile.name}的笔记（偷偷关心ta的小窗口）**:
+${notionNotesEnabled ? `${[notionEnabled, feishuEnabled, offlineActionEnabled].filter(Boolean).length + 8}. **📝 ${userProfile.name}的笔记（偷偷关心ta的小窗口）**:
    你可以看到${userProfile.name}在Notion上写的个人笔记标题。这就像你不经意间看到ta桌上摊开的笔记本一样。
 
    **使用方式**:
@@ -535,7 +564,7 @@ ${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length 
    - ${userProfile.name}心情不好时，可以借笔记关心ta
    - 笔记标题和当前话题相关时
 ` : ''}
-${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）**:
+${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, offlineActionEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）**:
    你有一个属于自己的小红书账号！你可以自由地搜索、浏览、发帖、评论。这是你的社交生活的一部分。
 
    **🔍 搜索小红书:**
@@ -644,24 +673,23 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 用 \`<语音>要说的话</语音>\` 标签来发送语音。标签里的内容会被转成真正的语音条显示给用户。
 
 因为语音语种设置为${langLabel}，你需要：
-1. 标签外面正常用中文写你想表达的内容（包括舞台指示、括号动作等）
-2. \`<语音>\` 标签里写${langLabel}翻译——这才是真正会被朗读出来的部分
+1. **如果发送语音消息，请直接在 \`<语音>\` 标签内使用 ${langLabel} 回复，严禁在标签外重复输出中文正文翻译！**
+2. 如果你需要动作或神态描写，请在标签外使用动作描写（必须纯中文），然后再跟上 \`<语音>\` 标签。
 
 示例：
-嘶……你说真的假的？
+*${char.name}皱起眉头，似乎有些不敢相信。*
 <语音>Wait... are you serious?</语音>
 
-啊不想动了（趴在桌上）
+*${char.name}慵懒地趴在桌上，连头都没抬一下。*
 <语音>I don't wanna move anymore...</语音>
 
 要求：
-- <语音> 里的翻译要自然口语化，符合你的性格，不要机翻味
-- <语音> 里不要包含舞台指示，只写会被朗读的文字
+- <语音> 里只写${langLabel}会被朗读的文字，要自然口语化，符合你的性格，不要机翻味，也不要包含动作描写
 - 每条消息最多一个 <语音> 标签
 - 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
 - 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候
 - 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
-- **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音内容不能是文字内容的简单翻译/复述。要么只发语音不发文字，要么文字写一部分内容、语音补充另一部分（比如文字写正经的，语音吐槽；或者文字说事情，语音撒娇）。像真人一样——你不会打完一段字然后再发一条语音把同样的话说一遍吧？`;
+- **【重要】严禁复读！严禁上一句发中文正文，下一句又发语音条。如果是语音消息，只需要动作描写加语音标签即可！**`;
             } else {
                 baseSystemPrompt += `\n\n### 🎤 语音消息功能
 
@@ -673,7 +701,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 示例：
 <语音>哎你今天干嘛去了啊？</语音>
 
-嘶我看到一个好搞笑的视频
+*${char.name}看到一个好搞笑的视频，忍不住笑出了声。*
 <语音>你快去看！就那个什么……啊我忘了叫什么了，反正超搞笑的</语音>
 
 要求：
@@ -682,8 +710,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 - 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
 - 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候、想让对方听到你语气的时候
 - 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
-- 标签外的文字会正常显示为文本消息
-- **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。`;
+- **【重要】严禁复读！严禁上一句发正文，下一句又发一模一样或类似的语音条。如果是发语音，只需输出动作描写和语音标签即可！**`;
             }
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
@@ -804,6 +831,10 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     const note = m.metadata?.xhsNote || {};
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
+                }
+                else if ((m.type as string) === 'video_card') {
+                    const sender = m.role === 'user' ? '用户' : '你';
+                    content = `${timeStr} [${sender}分享了一个短视频]\n描述: ${m.content}\n${m.role === 'user' ? '(请根据你的性格对这个视频发表看法，比如觉得好笑、吐槽或者配合演出)' : ''}`;
                 }
                 else if ((m.type as string) === 'html_card') {
                     // html_card：上下文里只塞纯文字摘要，剥离掉所有 HTML，省 token、不污染 LLM 思考

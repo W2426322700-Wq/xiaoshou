@@ -71,7 +71,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'share-video'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
@@ -86,6 +86,9 @@ const Chat: React.FC = () => {
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
+    
+    // Favorited messages state
+    const [isFavoriting, setIsFavoriting] = useState(false);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
@@ -125,6 +128,11 @@ const Chat: React.FC = () => {
         return localStorage.getItem(`chat_translate_lang_${activeCharacterId}`)
             || localStorage.getItem('chat_translate_lang')
             || '中文';
+    });
+    const [translateDisplayMode, setTranslateDisplayMode] = useState<'toggle' | 'bilingual'>(() => {
+        return (localStorage.getItem(`chat_translate_display_mode_${activeCharacterId}`) as 'toggle' | 'bilingual')
+            || (localStorage.getItem('chat_translate_display_mode') as 'toggle' | 'bilingual')
+            || 'toggle';
     });
     // Which messages are currently showing "译" version (toggle state only, no API calls)
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
@@ -277,10 +285,11 @@ const Chat: React.FC = () => {
 
             if (voiceTagContent) {
                 // AI already provided the spoken text (possibly translated) in <语音> tag
-                spokenText = cleanTextForTts(`<语音>${voiceTagContent}</语音>`);
+                // Note: stripParens=false so Voice Assistant can read the original parentheses
+                spokenText = await cleanTextForTts(`<语音>${voiceTagContent}</语音>`, false, apiConfig);
                 // originalText = text OUTSIDE the voice tag (the display/Chinese text)
                 const textOutsideTag = msg.content.replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '').trim();
-                originalText = textOutsideTag ? cleanTextForTts(textOutsideTag) : '';
+                originalText = textOutsideTag ? await cleanTextForTts(textOutsideTag, true) : '';
                 // If voice lang is set and no Chinese text outside the tag, translate spoken text back to Chinese
                 if (voiceLang && !originalText && spokenText) {
                     try {
@@ -308,15 +317,15 @@ const Chat: React.FC = () => {
                 const bilingualIdx = msg.content.toLowerCase().indexOf('%%bilingual%%');
                 const hasBilingual = bilingualIdx !== -1;
                 if (hasBilingual && voiceLang) {
-                    const langAText = cleanTextForTts(msg.content.substring(0, bilingualIdx));
-                    const langBText = cleanTextForTts(msg.content.substring(bilingualIdx + '%%BILINGUAL%%'.length));
+                    const langAText = await cleanTextForTts(msg.content.substring(0, bilingualIdx), false, apiConfig);
+                    const langBText = await cleanTextForTts(msg.content.substring(bilingualIdx + '%%BILINGUAL%%'.length), true);
                     if (!langAText || langAText.length < 2) return;
                     spokenText = langAText;
                     originalText = langBText || '';
                 } else {
-                    originalText = cleanTextForTts(msg.content);
+                    originalText = await cleanTextForTts(msg.content, true);
                     if (!originalText || originalText.length < 2) return;
-                    spokenText = originalText;
+                    spokenText = await cleanTextForTts(msg.content, false, apiConfig);
                     if (voiceLang) {
                         const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
                         try {
@@ -530,6 +539,11 @@ const Chat: React.FC = () => {
                 localStorage.getItem(`chat_translate_lang_${activeCharacterId}`)
                 || localStorage.getItem('chat_translate_lang')
                 || '中文'
+            );
+            setTranslateDisplayMode(
+                (localStorage.getItem(`chat_translate_display_mode_${activeCharacterId}`) as 'toggle' | 'bilingual')
+                || (localStorage.getItem('chat_translate_display_mode') as 'toggle' | 'bilingual')
+                || 'toggle'
             );
             setVisibleCount(30);
             visibleCountRef.current = 30;
@@ -786,9 +800,14 @@ const Chat: React.FC = () => {
     // --- Actions ---
 
     const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
-        if (!char || (!input.trim() && !customContent)) return;
+        if (!char) return;
         const text = customContent || input.trim();
         const type = customType || 'text';
+
+        if (!text && type === 'text') {
+            handleManualTrigger();
+            return;
+        }
 
         // 发消息隐含"回到当前聊天"——退出 windowed 旧消息浏览模式
         if (windowedFocusMsgId !== null) {
@@ -974,7 +993,21 @@ const Chat: React.FC = () => {
                 setShowThinkingChainModal(true);
                 break;
             }
+            case 'share-video': setModalType('share-video'); break;
         }
+    };
+
+    const handleShareVideo = async (text: string) => {
+        if (!char || !text.trim()) return;
+        setModalType('none');
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'video_card',
+            content: text.trim(),
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+        addToast('视频分享已发送', 'success');
     };
 
     // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
@@ -1687,6 +1720,54 @@ const Chat: React.FC = () => {
         addToast('已复制到剪贴板', 'success');
     };
 
+    const handleFavoriteMessage = async () => {
+        if (!selectedMessage || !char || isFavoriting) return;
+        setIsFavoriting(true);
+        try {
+            const hasVoice = !!voiceDataMap[selectedMessage.id];
+            
+            // Re-fetch character to ensure we have latest data
+            const allChars = await DB.getAllCharacters();
+            const currentCharData = allChars.find(c => c.id === char.id);
+            if (!currentCharData) throw new Error('Character not found');
+            
+            const currentFavorites = currentCharData.favorites || [];
+            
+            // Check if already favorited
+            if (currentFavorites.some((f: any) => f.messageId === selectedMessage.id)) {
+                addToast('这条消息已经收藏过了', 'info');
+                setModalType('none');
+                return;
+            }
+            
+            // Check bilingual content specifically
+            let contentToSave = selectedMessage.content;
+            
+            const newFavorite: import('../types').FavoritedMessage = {
+                id: `fav-${Date.now()}-${selectedMessage.id}`,
+                messageId: selectedMessage.id,
+                content: contentToSave,
+                role: selectedMessage.role,
+                type: selectedMessage.type,
+                timestamp: selectedMessage.timestamp,
+                savedAt: Date.now(),
+                hasVoice
+            };
+            
+            await updateCharacter(char.id, {
+                favorites: [...currentFavorites, newFavorite]
+            } as any);
+            
+            addToast('消息收藏成功！可以在角色-收藏里查看', 'success');
+        } catch (e: any) {
+            addToast(`收藏失败: ${e.message}`, 'error');
+        } finally {
+            setIsFavoriting(false);
+            setModalType('none');
+            setSelectedMessage(null);
+        }
+    };
+
     const handleDeleteEmoji = async () => {
         if (!selectedEmoji) return;
         await DB.deleteEmoji(selectedEmoji.name);
@@ -2127,20 +2208,24 @@ const Chat: React.FC = () => {
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onFavoriteMessage={handleFavoriteMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
                 translateSourceLang={translateSourceLang}
                 translateTargetLang={translateTargetLang}
+                translateDisplayMode={translateDisplayMode}
                 onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem(`chat_translate_source_lang_${activeCharacterId}`, lang); setShowingTargetIds(new Set()); }}
                 onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem(`chat_translate_lang_${activeCharacterId}`, lang); setShowingTargetIds(new Set()); }}
+                onSetTranslateDisplayMode={(mode: 'toggle' | 'bilingual') => { setTranslateDisplayMode(mode); localStorage.setItem(`chat_translate_display_mode_${activeCharacterId}`, mode); }}
                 xhsEnabled={!!char.xhsEnabled}
                 onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
                 htmlModeEnabled={!!(char as any).htmlModeEnabled}
                 onToggleHtmlMode={() => updateCharacter(char.id, { htmlModeEnabled: !((char as any).htmlModeEnabled) } as any)}
                 htmlModeCustomPrompt={settingsHtmlModeCustomPrompt}
                 setHtmlModeCustomPrompt={setSettingsHtmlModeCustomPrompt}
+                offlineActionEnabled={!!(char as any).offlineActionEnabled}
+                onToggleOfflineAction={() => updateCharacter(char.id, { offlineActionEnabled: !((char as any).offlineActionEnabled) } as any)}
                 chatVoiceEnabled={!!char.chatVoiceEnabled}
                 onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
                 chatVoiceLang={char.chatVoiceLang || ''}
@@ -2159,6 +2244,7 @@ const Chat: React.FC = () => {
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}
+                onShareVideo={handleShareVideo}
                 apiPresets={apiPresets}
                 onAddApiPreset={addApiPreset}
                 onSaveEmotion={(config) => {
@@ -2192,7 +2278,7 @@ const Chat: React.FC = () => {
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
                 onTriggerAI={handleManualTrigger}
-                onShowCharsPanel={() => setShowPanel('chars')}
+                onShowCharsPanel={() => setShowPanel(prev => prev === 'chars' ? 'none' : 'chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
                     const newBuffs = currentBuffs.filter(b => b.id !== buffId);
@@ -2383,6 +2469,7 @@ const Chat: React.FC = () => {
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
                             isShowingTarget={showingTargetIds.has(m.id)}
                             onTranslateToggle={handleTranslateToggle}
+                            translateDisplayMode={translateDisplayMode}
                             voiceData={voiceDataMap[m.id]}
                             voiceLoading={voiceLoading.has(m.id)}
                             isVoicePlaying={playingMsgId === m.id}

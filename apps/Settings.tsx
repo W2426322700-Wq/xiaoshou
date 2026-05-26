@@ -71,6 +71,40 @@ const Settings: React.FC = () => {
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
+  const [localVoiceAssistantEnabled, setLocalVoiceAssistantEnabled] = useState(
+    localStorage.getItem('tts_assistant_enabled') === 'true'
+  );
+  const [localVoiceAssistantKey, setLocalVoiceAssistantKey] = useState(
+    localStorage.getItem('tts_assistant_key') || ''
+  );
+  const [localVoiceAssistantPrompt, setLocalVoiceAssistantPrompt] = useState(
+    localStorage.getItem('tts_assistant_prompt') ||
+      `你是一个声优导演。你的任务是为即将被 TTS 引擎朗读的文本添加语气标签和停顿标记，让合成的语音听起来像一个真人在自然说话——有气息、有情绪、有节奏，而不是机器在念稿。
+原文()中的描写是语气词，()中的内容绝对不能作为朗读的文本，只能作为生成语气的辅助。
+
+可用标签（只用这些）：
+(laughs) (chuckle) (sighs) (breath) (gasps) (coughs) (sniffs) (crying) (humming) (pant) (emm)
+<#数字#> → 停顿，单位秒，支持小数如 <#0.5#>
+
+核心原则：少即是多。宁可少标也不要多标。一段话里出现超过 2 个语气标签就太多了。
+
+标注方法：
+1. 把自己想象成正在读这段话的声优。只在你真的会换气、会停顿、会叹气的地方标注。如果一段话读起来很流畅，就什么都不要加。
+2. 语气词直接替换：原文里的"哈哈"→(laughs)、"嗯"→(emm)、"唉"→(sighs)、"呵"→(chuckle)、"咳"→(coughs)、"呜"→(crying)、"哼"→(humming)。只处理明确的语气词，不要臆测。
+3. 括号动作处理：（笑）→(chuckle)、（叹气）→(sighs)、（清嗓）→(coughs)。无法用标签表达的动作描写直接删除。
+4. 省略号"..."：表示犹豫或欲言又止时转为 <#0.8#>，表示拖音或语气延续时保留原文不改。
+5. 停顿的使用场景（谨慎使用，每段文本最多 1-2 个）：
+   - 情绪发生明显转折的节点（从开心变难过、从平静变激动）
+   - 说出关键信息之前的蓄力（告白、揭示、反转）
+   不要在普通的逗号、短句之间添加停顿。正常的标点本身就有停顿效果。
+6. 呼吸标记 (breath)：只在以下场景使用——
+   - 角色情绪激动需要深呼吸稳住自己
+   - 一段确实很长的独白中间，你作为声优读到这里真的需要换口气
+   - 带有暧昧/亲密语气的句子开头，营造气息感
+   不要按字数插入，完全凭语感判断。大部分句子不需要 (breath)。
+7. 绝对不要修改说话的实际内容和用词。
+8. 直接输出处理后的文本，不要添加任何解释。`
+  );
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
@@ -379,6 +413,9 @@ const Settings: React.FC = () => {
       minimaxRegion: localMiniMaxRegion,
       aceStepApiKey: localAceStepKey,
     });
+    localStorage.setItem('tts_assistant_enabled', String(localVoiceAssistantEnabled));
+    localStorage.setItem('tts_assistant_key', localVoiceAssistantKey);
+    localStorage.setItem('tts_assistant_prompt', localVoiceAssistantPrompt);
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
@@ -1250,6 +1287,151 @@ const Settings: React.FC = () => {
                                         粘贴到上面输入框 → 点保存配置 → 进写歌 App 打开任意一首歌的预览页 → 底部「AI 出歌」即可。
                                     </p>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="group pt-4 border-t border-slate-200/50">
+                    <div className="flex items-center justify-between mb-2 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">智能语气助手 (声优导演)</label>
+                        <button
+                            type="button"
+                            onClick={() => setLocalVoiceAssistantEnabled(v => !v)}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${localVoiceAssistantEnabled ? 'bg-amber-500' : 'bg-slate-200'}`}
+                        >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${localVoiceAssistantEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-3 pl-1 leading-relaxed">
+                        开启后，每次生成语音前都会先调大模型给文本加上细腻的呼吸、停顿、情绪等语气词，大幅提升语音的拟真度。
+                    </p>
+                    
+                    {localVoiceAssistantEnabled && (
+                        <div className="space-y-3 pl-1 border-l-2 border-amber-200/40 ml-1 py-1">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">API 预设选择</label>
+                                <select
+                                    value={localVoiceAssistantKey}
+                                    onChange={(e) => setLocalVoiceAssistantKey(e.target.value)}
+                                    className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white transition-all outline-none"
+                                >
+                                    <option value="">-- 使用当前系统全局 API 配置 --</option>
+                                    {apiPresets.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </select>
+                                <p className="text-[9px] text-slate-400 mt-1">选择一个预设作为大模型接口（URL、Key、Model 会直接套用该预设）。不选则使用当前系统全局配置。</p>
+                            </div>
+                            
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">提示词 (Prompt)</label>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setLocalVoiceAssistantPrompt(`你是一个声优导演。你的任务是为即将被 TTS 引擎朗读的文本添加语气标签和停顿标记，让合成的语音听起来像一个真人在自然说话——有气息、有情绪、有节奏，而不是机器在念稿。
+原文()中的描写是语气词，()中的内容绝对不能作为朗读的文本，只能作为生成语气的辅助。
+
+可用标签（只用这些）：
+(laughs) (chuckle) (sighs) (breath) (gasps) (coughs) (sniffs) (crying) (humming) (pant) (emm)
+<#数字#> → 停顿，单位秒，支持小数如 <#0.5#>
+
+核心原则：少即是多。宁可少标也不要多标。一段话里出现超过 2 个语气标签就太多了。
+
+标注方法：
+1. 把自己想象成正在读这段话的声优。只在你真的会换气、会停顿、会叹气的地方标注。如果一段话读起来很流畅，就什么都不要加。
+2. 语气词直接替换：原文里的"哈哈"→(laughs)、"嗯"→(emm)、"唉"→(sighs)、"呵"→(chuckle)、"咳"→(coughs)、"呜"→(crying)、"哼"→(humming)。只处理明确的语气词，不要臆测。
+3. 括号动作处理：（笑）→(chuckle)、（叹气）→(sighs)、（清嗓）→(coughs)。无法用标签表达的动作描写直接删除。
+4. 省略号"..."：表示犹豫或欲言又止时转为 <#0.8#>，表示拖音或语气延续时保留原文不改。
+5. 停顿的使用场景（谨慎使用，每段文本最多 1-2 个）：
+   - 情绪发生明显转折的节点（从开心变难过、从平静变激动）
+   - 说出关键信息之前的蓄力（告白、揭示、反转）
+   不要在普通的逗号、短句之间添加停顿。正常的标点本身就有停顿效果。
+6. 呼吸标记 (breath)：只在以下场景使用——
+   - 角色情绪激动需要深呼吸稳住自己
+   - 一段确实很长的独白中间，你作为声优读到这里真的需要换口气
+   - 带有暧昧/亲密语气的句子开头，营造气息感
+   不要按字数插入，完全凭语感判断。大部分句子不需要 (breath)。
+7. 绝对不要修改说话的实际内容和用词。
+8. 直接输出处理后的文本，不要添加任何解释。`)}
+                                        className="text-[9px] text-amber-500 hover:text-amber-600 font-bold"
+                                    >
+                                        恢复默认
+                                    </button>
+                                </div>
+                                <textarea 
+                                    value={localVoiceAssistantPrompt} 
+                                    onChange={(e) => setLocalVoiceAssistantPrompt(e.target.value)} 
+                                    className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2 text-[10px] font-mono focus:bg-white transition-all" 
+                                    rows={8}
+                                />
+                            </div>
+
+                            {/* 语气助手测试模块 */}
+                            <div className="pt-2">
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        setOtherStatusMsg('测试中...');
+                                        const testText = "哎呀，今天真是倒霉透了...出门没带伞还被淋成落汤鸡，太难受了。";
+                                        
+                                        // 构造测试环境参数
+                                        let targetBaseUrl = (apiConfig.baseUrl || 'https://api.openai.com').replace(/\/+$/, '');
+                                        let targetApiKey = apiConfig.apiKey || '';
+                                        let targetModel = apiConfig.model || 'gpt-4o-mini';
+                                        
+                                        if (localVoiceAssistantKey) {
+                                            const preset = apiPresets.find(p => p.id === localVoiceAssistantKey);
+                                            if (preset) {
+                                                targetBaseUrl = (preset.config.baseUrl || targetBaseUrl).replace(/\/+$/, '');
+                                                targetApiKey = preset.config.apiKey || targetApiKey;
+                                                targetModel = preset.config.model || targetModel;
+                                            }
+                                        }
+
+                                        if (!targetApiKey.trim()) {
+                                            alert("测试失败：未能找到有效的 API Key（检查预设或全局配置）");
+                                            setOtherStatusMsg('');
+                                            return;
+                                        }
+
+                                        try {
+                                            const res = await fetch(`${targetBaseUrl}/chat/completions`, {
+                                                method: 'POST',
+                                                headers: {
+                                                    'Content-Type': 'application/json',
+                                                    'Authorization': `Bearer ${targetApiKey.trim()}`
+                                                },
+                                                body: JSON.stringify({
+                                                    model: targetModel,
+                                                    messages: [
+                                                        { role: 'system', content: localVoiceAssistantPrompt },
+                                                        { role: 'user', content: testText }
+                                                    ],
+                                                    temperature: 0.7,
+                                                    max_tokens: 500,
+                                                    stream: false
+                                                })
+                                            });
+
+                                            if (res.ok) {
+                                                const data = await res.json();
+                                                const enhancedText = data.choices?.[0]?.message?.content?.trim();
+                                                alert(`测试成功！\n\n【原始文本】：\n${testText}\n\n【大模型加工后】：\n${enhancedText || '无返回内容'}`);
+                                            } else {
+                                                const errText = await res.text();
+                                                alert(`测试失败 (HTTP ${res.status}):\n${errText}`);
+                                            }
+                                        } catch (e: any) {
+                                            alert(`测试异常：${e.message}`);
+                                        }
+                                        setOtherStatusMsg('');
+                                    }}
+                                    className="w-full py-2 bg-amber-100 text-amber-700 text-[11px] font-bold rounded-xl active:scale-95 transition-transform"
+                                >
+                                    🧪 测试语气助手大模型效果
+                                </button>
+                                <p className="text-[9px] text-slate-400 mt-1">点此可发送一段自带情绪的测试句，看大模型是否正常返回了 (sighs) 等标签。</p>
                             </div>
                         </div>
                     )}

@@ -92,14 +92,14 @@ const CharacterWidget = React.memo(({
     return (
         <div className="mb-3 group animate-fade-in">
              <div
-                className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
+                className="relative h-24 w-full overflow-hidden cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
                 style={{
+                    borderRadius: '22px', // iOS widget style
                     background: 'rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(24px) saturate(1.4)',
                     WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
                 }}
              >
                  {/* 背景虚化角色头像 */}
@@ -205,11 +205,11 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick }: {
     return (
         <div
             onClick={onClick}
-            className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
+            className="relative w-full h-full overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
             style={{
+                borderRadius: '22.5%', // iOS app icon style
                 background: image ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.28)',
-                border: '1px solid rgba(255,255,255,0.18)',
-                boxShadow: '0 8px 30px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.22)',
                 color: contentColor,
             }}
         >
@@ -488,7 +488,7 @@ const Launcher: React.FC = () => {
   };
 
   const contentColor = theme.contentColor || '#ffffff';
-  const launcherBottomInset = 'max(env(safe-area-inset-bottom), 1.25rem)';
+  const launcherBottomInset = 'calc(env(safe-area-inset-bottom) + 1.25rem)';
   
   const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0);
   const widgetUnread = widgetChar && unreadMessages[widgetChar.id] ? unreadMessages[widgetChar.id] : 0;
@@ -669,7 +669,7 @@ const Launcher: React.FC = () => {
            className="mt-auto flex justify-center w-full px-4 relative z-30"
            style={{ paddingBottom: launcherBottomInset }}
       >
-           <div className="bg-white/30 rounded-[1.75rem] border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu">
+           <div className="bg-white/30 rounded-[30px] shadow-[0_8px_40px_rgba(0,0,0,0.22)] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu" style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
                {dockAppsConfig.map(app => (
                    <div key={app.id} className="relative">
                         <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />

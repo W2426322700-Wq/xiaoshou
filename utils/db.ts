@@ -6,11 +6,11 @@ import {
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot
+    LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot, HisDailyEvent
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 51; // Bumped: v51 add 'hotnews_snapshots' store (分时段热点快照)
+const DB_VERSION = 52; // Bumped: v52 add 'his_daily_events' store
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -46,6 +46,7 @@ const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry
 const STORE_TRACKERS = 'trackers';                // 手账打卡 tracker 定义
 const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
 const STORE_HOTNEWS = 'hotnews_snapshots';        // 分时段热点快照（全角色共享，key=日期#时段）
+const STORE_HIS_DAILY_EVENTS = 'his_daily_events';
 
 export interface ScheduledMessage {
     id: string;
@@ -169,6 +170,12 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
 
       createStore(STORE_HOTNEWS, { keyPath: 'id' });
+
+      if (!db.objectStoreNames.contains(STORE_HIS_DAILY_EVENTS)) {
+          const hisDailyStore = db.createObjectStore(STORE_HIS_DAILY_EVENTS, { keyPath: 'id' });
+          hisDailyStore.createIndex('charId', 'charId', { unique: false });
+          hisDailyStore.createIndex('date', 'date', { unique: false });
+      }
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -1130,6 +1137,65 @@ export const DB = {
       transaction.objectStore(STORE_HOTNEWS).put(snapshot);
   },
 
+  // ─── His Daily Events (他的日常) ───
+  getHisDailyEvents: async (charId: string, date?: string): Promise<HisDailyEvent[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_HIS_DAILY_EVENTS)) { resolve([]); return; }
+          const transaction = db.transaction(STORE_HIS_DAILY_EVENTS, 'readonly');
+          const store = transaction.objectStore(STORE_HIS_DAILY_EVENTS);
+          const index = store.index('charId');
+          const request = index.getAll(IDBKeyRange.only(charId));
+          request.onsuccess = () => {
+              let results = (request.result || []) as HisDailyEvent[];
+              if (date) {
+                  results = results.filter(e => e.date === date);
+              }
+              // 按照生成时间倒序排列
+              results.sort((a, b) => b.createdAt - a.createdAt);
+              resolve(results);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  getUnmentionedHisDailyEvents: async (charId: string, limit: number = 3): Promise<HisDailyEvent[]> => {
+      const allEvents = await DB.getHisDailyEvents(charId);
+      return allEvents.filter(e => !e.isMentioned).slice(0, limit);
+  },
+
+  saveHisDailyEvent: async (event: HisDailyEvent): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HIS_DAILY_EVENTS, 'readwrite');
+      transaction.objectStore(STORE_HIS_DAILY_EVENTS).put(event);
+  },
+
+  markHisDailyEventMentioned: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HIS_DAILY_EVENTS, 'readwrite');
+      const store = transaction.objectStore(STORE_HIS_DAILY_EVENTS);
+      return new Promise((resolve, reject) => {
+          const req = store.get(id);
+          req.onsuccess = () => {
+              const event = req.result as HisDailyEvent;
+              if (event) {
+                  event.isMentioned = true;
+                  store.put(event);
+                  resolve();
+              } else {
+                  reject(new Error('HisDailyEvent not found'));
+              }
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  deleteHisDailyEvent: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HIS_DAILY_EVENTS, 'readwrite');
+      transaction.objectStore(STORE_HIS_DAILY_EVENTS).delete(id);
+  },
+
   // 拿最近一次快照（按 fetchedAt 倒序），失败兜底与 App 展示用
   getLatestHotNewsSnapshot: async (): Promise<HotNewsSnapshot | null> => {
       const db = await openDB();
@@ -1588,7 +1654,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hisDailyEvents] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1621,6 +1687,7 @@ export const DB = {
           getAllFromStore(STORE_HANDBOOK),
           getAllFromStore(STORE_TRACKERS),
           getAllFromStore(STORE_TRACKER_ENTRIES),
+          getAllFromStore(STORE_HIS_DAILY_EVENTS),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1647,6 +1714,7 @@ export const DB = {
           handbooks,
           trackers,
           trackerEntries,
+          hisDailyEvents,
       };
   },
 
@@ -1668,6 +1736,7 @@ export const DB = {
           STORE_HANDBOOK,
           STORE_TRACKERS,
           STORE_TRACKER_ENTRIES,
+          STORE_HIS_DAILY_EVENTS,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
           'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
@@ -1812,6 +1881,7 @@ export const DB = {
       // 手账 Tracker（健康/生活打卡引擎）
       if (data.trackers) clearAndAdd(STORE_TRACKERS, data.trackers);
       if (data.trackerEntries) clearAndAdd(STORE_TRACKER_ENTRIES, data.trackerEntries);
+      if (data.hisDailyEvents) clearAndAdd(STORE_HIS_DAILY_EVENTS, data.hisDailyEvents);
 
       // Pixel Home（小屋像素界面）
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);

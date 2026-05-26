@@ -8,6 +8,101 @@ import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 
+// ----------------------------------------------------------------------------
+// 智能语气助手 (Voice Assistant) - 前置拦截逻辑
+// ----------------------------------------------------------------------------
+export const processTextWithVoiceAssistant = async (
+  rawText: string,
+  apiConfig: APIConfig
+): Promise<string> => {
+  const isEnabled = localStorage.getItem('tts_assistant_enabled') === 'true';
+  const presetId = localStorage.getItem('tts_assistant_key') || '';
+  const prompt = localStorage.getItem('tts_assistant_prompt') || '';
+  
+  // 如果开关未打开，直接返回原文本
+  if (!isEnabled) return rawText;
+
+  // 决定使用的 API 配置
+  let targetBaseUrl = (apiConfig.baseUrl || 'https://api.openai.com').replace(/\/+$/, '');
+  let targetApiKey = apiConfig.apiKey || '';
+  let targetModel = apiConfig.model || 'gpt-4o-mini';
+
+  // 尝试从持久化的状态获取指定 preset
+  // 在 OSContext 中，ApiPresets 存储在 localStorage 的 'os_api_presets' 键中
+  try {
+      if (presetId) {
+         const presetsRaw = localStorage.getItem('os_api_presets');
+         if (presetsRaw) {
+             const presets = JSON.parse(presetsRaw);
+             const preset = presets.find((p: any) => p.id === presetId);
+             if (preset && preset.config) {
+                 targetBaseUrl = (preset.config.baseUrl || targetBaseUrl).replace(/\/+$/, '');
+                 targetApiKey = preset.config.apiKey || targetApiKey;
+                 targetModel = preset.config.model || targetModel;
+             }
+         }
+      }
+  } catch (e) {
+      console.warn('[VoiceAssistant] 无法加载指定 preset，降级为全局配置', e);
+  }
+
+  // 最终如果还是没有 Key，那发不了请求
+  if (!targetApiKey.trim()) return rawText;
+
+  try {
+    let url = targetBaseUrl;
+    if (!url.endsWith('/v1') && !url.includes('/v1/')) {
+      url += '/v1';
+    }
+    url += '/chat/completions';
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时保护
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${targetApiKey.trim()}`
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: rawText }
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
+        stream: false
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      const enhancedText = data.choices?.[0]?.message?.content?.trim();
+      if (enhancedText) {
+        console.log('%c[VoiceAssistant] 🎭 语气助手加工成功', 'color: #10b981; font-weight: bold;');
+        console.log('%c原文: %c' + rawText, 'color: #64748b;', 'color: #334155;');
+        console.log('%c增强: %c' + enhancedText, 'color: #64748b;', 'color: #0f172a; font-weight: 500;');
+        return enhancedText;
+      } else {
+        console.log('%c[VoiceAssistant] ⚠️ 语气助手返回了空文本，降级回原文本', 'color: #f59e0b;');
+      }
+    } else {
+      console.warn(`[VoiceAssistant] ❌ 请求失败 (HTTP ${res.status}):`, await res.text().catch(() => ''));
+    }
+  } catch (error) {
+    console.warn('[VoiceAssistant] ❌ 网络请求出错或超时:', error);
+  }
+
+  // 出错、超时或返回异常时，安全降级，返回原始文本
+  return rawText;
+};
+// ----------------------------------------------------------------------------
+
 // MiniMax 支持的语气标签 — 这些在 TTS 中会被正确演绎，必须保留
 const VALID_INTERJECTION_TAGS = new Set([
   'chuckle', 'laughs', 'sighs', 'coughs', 'clear-throat', 'groans',
@@ -31,7 +126,7 @@ const CN_CUE_MAP: Record<string, string> = {
 };
 
 /** Strip parenthetical content intelligently: map known cues → interjection tags, delete unknown */
-const stripParensPreservingTags = (text: string): string => {
+export const stripParensPreservingTags = (text: string): string => {
   return text
     // 中文括号：映射 or 删除
     .replace(/（([^）]{1,48})）/g, (_m, cue: string) => {
@@ -55,25 +150,38 @@ const stripParensPreservingTags = (text: string): string => {
  * If <语音>...</语音> tag exists, use its content (already translated for TTS).
  * Otherwise, strip（parenthetical cues）so they aren't read aloud.
  * Known interjection tags like (chuckle) / (sighs) are preserved.
+ * @param stripParens If false, keeps parenthetical cues (useful to pass to Voice Assistant before stripping).
+ * @param apiConfig Provide apiConfig if you want to run Voice Assistant preprocessing (e.g., from Chat).
  */
-export const cleanTextForTts = (raw: string): string => {
+export const cleanTextForTts = async (raw: string, stripParens = true, apiConfig?: APIConfig): Promise<string> => {
+  let text = raw;
+
   // 1. If <语音> tag exists, extract and use that content only
   const voiceTagMatch = raw.match(/<[语語]音>([\s\S]*?)<\/[语語]音>/);
   if (voiceTagMatch) {
-    return stripParensPreservingTags(voiceTagMatch[1]).replace(/\s+/g, ' ').trim();
+    let t = voiceTagMatch[1];
+    if (stripParens) t = stripParensPreservingTags(t);
+    text = t.replace(/\s+/g, ' ').trim();
+  } else {
+    // 2. Strip [[...]] system markers
+    text = text.replace(/\[\[.*?\]\]/g, '');
+    // 3. Strip %%BILINGUAL%% and everything after
+    text = text.replace(/%%BILINGUAL%%[\s\S]*/i, '');
+    // 4. Map/strip parenthetical cues (preserving valid interjection tags)
+    if (stripParens) {
+      text = stripParensPreservingTags(text);
+    }
+    // 5. Strip <语音>...</语音> tags if they somehow remain
+    text = text.replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '');
+    // 6. Collapse whitespace
+    text = text.replace(/\s+/g, ' ').trim();
   }
 
-  let text = raw;
-  // 2. Strip [[...]] system markers
-  text = text.replace(/\[\[.*?\]\]/g, '');
-  // 3. Strip %%BILINGUAL%% and everything after
-  text = text.replace(/%%BILINGUAL%%[\s\S]*/i, '');
-  // 4. Map/strip parenthetical cues (preserving valid interjection tags)
-  text = stripParensPreservingTags(text);
-  // 5. Strip <语音>...</语音> tags if they somehow remain
-  text = text.replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '');
-  // 6. Collapse whitespace
-  text = text.replace(/\s+/g, ' ').trim();
+  // 7. Optional LLM Voice Preprocessing (apply to BOTH normal text and <语音> content)
+  if (apiConfig && localStorage.getItem('tts_assistant_enabled') === 'true') {
+    text = await processTextWithVoiceAssistant(text, apiConfig);
+  }
+
   return text;
 };
 
@@ -214,6 +322,7 @@ export async function synthesizeSpeechDetailed(
     throw new Error('角色未配置语音');
   }
 
+  // Note: the text should ideally already be cleaned and processed by `cleanTextForTts`
   // Insert natural pauses at punctuation marks
   const processedText = insertSpeechBreaks(text);
 

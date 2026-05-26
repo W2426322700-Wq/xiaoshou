@@ -64,6 +64,7 @@ interface ChatModalsProps {
     onConfirmEditMessage: () => void;
     onDeleteMessage: () => void;
     onCopyMessage: () => void;
+    onFavoriteMessage?: () => void;
     onDeleteEmoji: () => void;
     onDeleteCategory: () => void;
     // Category Visibility
@@ -74,8 +75,10 @@ interface ChatModalsProps {
     onToggleTranslation?: () => void;
     translateSourceLang?: string;
     translateTargetLang?: string;
+    translateDisplayMode?: 'toggle' | 'bilingual';
     onSetTranslateSourceLang?: (lang: string) => void;
     onSetTranslateLang?: (lang: string) => void;
+    onSetTranslateDisplayMode?: (mode: 'toggle' | 'bilingual') => void;
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
@@ -84,6 +87,9 @@ interface ChatModalsProps {
     onToggleHtmlMode?: () => void;
     htmlModeCustomPrompt?: string;
     setHtmlModeCustomPrompt?: (v: string) => void;
+    // Offline Action
+    offlineActionEnabled?: boolean;
+    onToggleOfflineAction?: () => void;
     // Voice TTS
     chatVoiceEnabled?: boolean;
     onToggleChatVoice?: () => void;
@@ -107,6 +113,8 @@ interface ChatModalsProps {
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
     onForceVectorize?: () => void;
+    // Share Video
+    onShareVideo?: (text: string) => void;
     // Emotion (embedded under schedule modal, synced on/off with scheduleStyle)
     apiPresets?: ApiPreset[];
     onAddApiPreset?: (name: string, config: APIConfig) => void;
@@ -130,20 +138,23 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onBgUpload, onRemoveBg, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
+    onSetHistoryStart, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onFavoriteMessage, onDeleteEmoji, onDeleteCategory,
     allCharacters = [], onSaveCategoryVisibility,
-    translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
+    translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, translateDisplayMode, onSetTranslateSourceLang, onSetTranslateLang, onSetTranslateDisplayMode,
     xhsEnabled, onToggleXhs,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
+    offlineActionEnabled, onToggleOfflineAction,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
+    onShareVideo,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
+    const [videoShareText, setVideoShareText] = useState('');
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const [historySearch, setHistorySearch] = useState('');
@@ -241,6 +252,22 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     return (
         <>
             <Modal 
+                isOpen={modalType === 'share-video'} title="分享视频" onClose={() => { setModalType('none'); setVideoShareText(''); }}
+                footer={<><button onClick={() => { setModalType('none'); setVideoShareText(''); }} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={() => { if(onShareVideo) onShareVideo(videoShareText); setVideoShareText(''); }} disabled={!videoShareText.trim()} className={`flex-1 py-3 text-white rounded-2xl ${videoShareText.trim() ? 'bg-rose-500' : 'bg-rose-300'}`}>发送</button></>}
+            >
+                <div className="space-y-3">
+                    <p className="text-xs text-slate-400">填写视频内容描述，角色会认为这是你发给 ta 的视频：</p>
+                    <textarea 
+                        value={videoShareText} 
+                        onChange={e => setVideoShareText(e.target.value)} 
+                        placeholder="例如：一只很可爱的小猫在翻跟头..." 
+                        className="w-full h-32 bg-slate-100 rounded-2xl p-4 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-rose-500/20" 
+                        autoFocus 
+                    />
+                </div>
+            </Modal>
+
+            <Modal 
                 isOpen={modalType === 'transfer'} title="Credits 转账" onClose={() => setModalType('none')}
                 footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onTransfer} className="flex-1 py-3 bg-orange-500 text-white rounded-2xl">确认</button></>}
             ><input type="number" value={transferAmt} onChange={e => setTransferAmt(e.target.value)} className="w-full bg-slate-100 rounded-2xl px-5 py-4 text-lg font-bold" autoFocus /></Modal>
@@ -277,8 +304,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                      <div>
                          <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">聊天背景</label>
                          <div onClick={() => bgInputRef.current?.click()} className="h-24 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center cursor-pointer hover:border-primary/50 overflow-hidden relative">
-                             {activeCharacter.chatBackground ? <img src={activeCharacter.chatBackground} className="w-full h-full object-cover opacity-60" /> : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
-                             {activeCharacter.chatBackground && <span className="absolute z-10 text-xs bg-white/80 px-2 py-1 rounded">更换</span>}
+                             {activeCharacter?.chatBackground ? <img src={activeCharacter.chatBackground} className="w-full h-full object-cover opacity-60" /> : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
+                             {activeCharacter?.chatBackground && <span className="absolute z-10 text-xs bg-white/80 px-2 py-1 rounded">更换</span>}
                          </div>
                          <input type="file" ref={bgInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && onBgUpload(e.target.files[0])} />
                          {activeCharacter.chatBackground && <button onClick={onRemoveBg} className="text-[10px] text-red-400 mt-1">移除背景</button>}
@@ -331,6 +358,24 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  </div>
                                  {/* Target Language (译) */}
                                  <div>
+                                     <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">显示模式</label>
+                                     <div className="flex flex-col gap-2 mb-3">
+                                         <button
+                                             onClick={() => onSetTranslateDisplayMode?.('toggle')}
+                                             className={`w-full text-left px-3 py-2 rounded-xl text-[11px] font-bold transition-all border ${translateDisplayMode === 'toggle' ? 'bg-primary/10 border-primary text-primary' : 'bg-slate-50 border-slate-100 text-slate-600'}`}
+                                         >
+                                             手动点击查看翻译
+                                         </button>
+                                         <button
+                                             onClick={() => onSetTranslateDisplayMode?.('bilingual')}
+                                             className={`w-full text-left px-3 py-2 rounded-xl text-[11px] font-bold transition-all border ${translateDisplayMode === 'bilingual' ? 'bg-primary/10 border-primary text-primary' : 'bg-slate-50 border-slate-100 text-slate-600'}`}
+                                         >
+                                             直接显示翻译 (原文在上，翻译在下)
+                                         </button>
+                                     </div>
+                                 </div>
+                                 {/* Target Language (译) */}
+                                 <div>
                                      <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">译（翻译目标语言）</label>
                                      <div className="flex flex-wrap gap-1.5">
                                          {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
@@ -362,6 +407,19 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后，角色在聊天中可以搜索、浏览、发帖、评论小红书。需要在全局设置中配置 MCP 或 Cookie。
+                         </p>
+                     </div>
+
+                     {/* 线下描写模式 */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleOfflineAction}>
+                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">线下描写</label>
+                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${offlineActionEnabled ? 'bg-sky-500' : 'bg-slate-200'}`}>
+                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${offlineActionEnabled ? 'translate-x-4' : ''}`}></div>
+                             </div>
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                             开启后，要求 AI 以第三人称（带具体名字）描写动作与神态，严禁使用“他/她”等代词或第一人称。
                          </p>
                      </div>
 
@@ -471,8 +529,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         const activeName = activePrompt?.name || '理性精炼 (Rational)';
                         if (palaceOn && autoOn) {
                             return (
-                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                                    ✅ <b>自动归档已开启</b>。palace 处理后系统会按日期自动把聊天归档到"本月日度总结"。<br/>
+                                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
+                                     ✅ <b>自动归档已开启</b>。palace 处理后系统会按日期自动把聊天归档到"本月日度总结"。<br/>
                                     自动归档走的是 <b>记忆宫殿内置风格</b>（保证向量检索质量稳定），
                                     下方模板<b>只对这里的"开始归档"按钮生效</b>——你在这换风格不会影响自动归档。
                                 </div>
@@ -551,7 +609,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             >
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar p-1">
                     <p className="text-xs text-slate-400 text-center mb-2"><b>短按</b>消息 = 设为隐藏起点（会再次确认） · <b>长按</b>消息 = 跳转到聊天里查看原文</p>
-                    {typeof activeCharacter.hideBeforeMessageId === 'number' && activeCharacter.hideBeforeMessageId > 0 && (
+                    {typeof activeCharacter?.hideBeforeMessageId === 'number' && activeCharacter.hideBeforeMessageId > 0 && (
                         <div className="bg-violet-50 border border-violet-200 rounded-xl p-2.5 text-[11px] text-violet-800 leading-relaxed mb-2">
                             <b>💡 已经有隐藏起点了</b>：灰色消息是自动/手动归档时标记为"已总结"的，AI 现在看不到原文，但能看到它们的总结。<br/>
                             <span className="text-violet-600">记忆宫殿向量记忆有自己的水位线（和这里无关），不用手动管。</span>
@@ -581,7 +639,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         const limited = query ? filtered.slice(0, HISTORY_SEARCH_MAX) : filtered;
                         const totalPages = Math.max(1, Math.ceil(limited.length / HISTORY_PAGE_SIZE));
                         const pageMessages = limited.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
-                        const hideCut = activeCharacter.hideBeforeMessageId;
+                        const hideCut = activeCharacter?.hideBeforeMessageId;
                         return (<>
                             {query && (
                                 <div className="text-xs text-slate-500 px-1 py-1">
@@ -625,7 +683,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     >
                                         <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
                                         <div className="flex-1 min-w-0">
-                                            <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
+                                            <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter?.name}</div>
                                             <div className="truncate">{renderHighlighted(m.content || '', query, contentClass)}</div>
                                         </div>
                                         {isCurrentStart && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
@@ -660,7 +718,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         return (<>
                             <p>该条之前的消息将被隐藏，不再发送给 AI（你仍能在聊天里翻看）。</p>
                             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                                <div className="font-bold text-slate-600 mb-1">{m.role === 'user' ? '我' : activeCharacter.name} <span className="text-slate-400 font-normal text-[10px] ml-1">{new Date(m.timestamp).toLocaleString()}</span></div>
+                                <div className="font-bold text-slate-600 mb-1">{m.role === 'user' ? '我' : activeCharacter?.name} <span className="text-slate-400 font-normal text-[10px] ml-1">{new Date(m.timestamp).toLocaleString()}</span></div>
                                 <div className="text-slate-500 line-clamp-3">{m.content}</div>
                             </div>
                             {onJumpToMessageInChat && (
@@ -699,6 +757,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {selectedMessage?.type === 'text' && (
                         <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             复制文字
+                        </button>
+                    )}
+                    {onFavoriteMessage && selectedMessage && (
+                        <button onClick={() => { onFavoriteMessage(); setModalType('none'); }} className="w-full py-3 bg-amber-50 text-amber-600 font-medium rounded-2xl active:bg-amber-100 transition-colors flex items-center justify-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+                            </svg>
+                            收藏消息
                         </button>
                     )}
                     {voiceAvailable && selectedMessage?.role === 'assistant' && selectedMessage?.type === 'text' && onGenerateVoice && (

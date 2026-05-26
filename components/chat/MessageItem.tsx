@@ -656,6 +656,7 @@ interface MessageItemProps {
     // Translation (AI messages only, bilingual content parsed from %%BILINGUAL%%)
     translationEnabled?: boolean;
     isShowingTarget?: boolean;
+    translateDisplayMode?: 'toggle' | 'bilingual';
     onTranslateToggle?: (msgId: number) => void;
     // Voice TTS
     voiceData?: { url: string; originalText: string; spokenText?: string; lang?: string };
@@ -700,6 +701,7 @@ const MessageItem = React.memo(({
     onToggleThinkingSelect,
     translationEnabled,
     isShowingTarget,
+    translateDisplayMode = 'toggle',
     onTranslateToggle,
     voiceData,
     voiceLoading,
@@ -1226,6 +1228,41 @@ const MessageItem = React.memo(({
                         <span style={{ color: '#5a49a8', fontWeight: 600 }}>Shizuku Music</span>
                         <span>·</span>
                         <span>{isUser ? '分享' : '互动'}</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // --- Video Card Rendering (分享视频) ---
+    if (m.type === 'video_card') {
+        const text = m.content;
+        const searchKeyword = typeof text === 'string' ? text.split('\n')[0].replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '') : '视频分享';
+        const searchUrl = `https://www.douyin.com/search/${encodeURIComponent(searchKeyword)}`;
+        
+        return commonLayout(
+            <div 
+                onClick={() => window.open(searchUrl, '_blank', 'noopener,noreferrer')}
+                className="w-64 bg-[#161823] rounded-xl overflow-hidden shadow-sm border border-[#2A2B36] cursor-pointer active:opacity-90 transition-opacity"
+            >
+                <div className="relative w-full h-40 bg-gradient-to-br from-[#2A2B36] to-[#161823] overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded flex items-center gap-1 bg-black/40 backdrop-blur-sm z-10">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" /></svg>
+                        <span className="text-[9px] text-white font-medium">视频</span>
+                    </div>
+                    
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
+                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-16 h-16 text-white"><path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h8.25a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3H4.5ZM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v11.38c0 1.336-1.616 2.005-2.56 1.06Z" /></svg>
+                    </div>
+
+                    <div className="mt-auto p-3 bg-gradient-to-t from-black/80 to-transparent relative z-10 w-full">
+                        <p className="text-white text-[13px] font-medium line-clamp-3 leading-snug">{text}</p>
+                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/10">
+                             <div className="flex items-center gap-1.5">
+                                 <span className="text-[#FACE15] text-[10px] font-bold">♪</span>
+                                 <span className="text-white/80 text-[10px]">原声 - {isUser ? '你' : charName}分享的视频</span>
+                             </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1863,9 +1900,11 @@ const MessageItem = React.memo(({
     const langAContent = hasBilingual ? stripJunk(rawContent.substring(0, bilingualIdx)) : stripJunk(rawContent);
     const langBContent = hasBilingual ? stripJunk(rawContent.substring(bilingualIdx + '%%BILINGUAL%%'.length)) : '';
 
+    const isBilingualMode = translationEnabled && translateDisplayMode === 'bilingual' && hasBilingual && !!langBContent;
+
     // Display: "选" language by default, "译" language when toggled
-    const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
-    const showTranslateButton = translationEnabled && hasBilingual && langBContent;
+    const displayContent = isBilingualMode ? langAContent : ((isShowingTarget && langBContent) ? langBContent : langAContent);
+    const showTranslateButton = translationEnabled && hasBilingual && langBContent && translateDisplayMode === 'toggle';
 
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
     const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
@@ -1873,14 +1912,12 @@ const MessageItem = React.memo(({
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
-    // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+    const bubbleClass = `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 animate-fade-in ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`;
 
     return commonLayout(
-        <div className={isVoiceOnlyMsg
-            ? 'relative animate-fade-in'
-            : `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 animate-fade-in ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
-            style={isVoiceOnlyMsg ? undefined : containerStyle}>
+        <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} gap-2`}>
+            {displayContent && (
+                <div className={bubbleClass} style={containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
             {styleConfig.backgroundImage && (
@@ -1916,15 +1953,24 @@ const MessageItem = React.memo(({
                 </div>
             )}
 
-            {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
-            {displayContent && (
+            {/* Layer 4: Text Content */}
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
-                {renderContent(displayContent)}
+                {isBilingualMode ? (
+                    <div className="flex flex-col">
+                        <div className="pb-2 border-b" style={{ borderColor: styleConfig.textColor ? `${styleConfig.textColor}33` : 'rgba(0,0,0,0.1)' }}>
+                            {renderContent(langAContent)}
+                        </div>
+                        <div className="pt-2 text-[14px]" style={{ opacity: 0.85 }}>
+                            {renderContent(langBContent)}
+                        </div>
+                    </div>
+                ) : (
+                    renderContent(displayContent)
+                )}
             </div>
-            )}
 
             {/* Layer 5: Per-bubble Translate Toggle (AI bilingual messages only) */}
-            {showTranslateButton && displayContent && (
+            {showTranslateButton && (
                 <div className="relative z-10 mt-2 flex justify-end">
                     <button
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); onTranslateToggle?.(m.id); }}
@@ -1949,6 +1995,8 @@ const MessageItem = React.memo(({
                     </button>
                 </div>
             )}
+                </div>
+            )}
 
             {/* Layer 6: Voice Bar */}
             {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
@@ -1957,10 +2005,8 @@ const MessageItem = React.memo(({
                 const vbBtn = styleConfig.voiceBarBtnColor;
                 const vbWave = styleConfig.voiceBarWaveColor;
                 const vbText = styleConfig.voiceBarTextColor;
-                // Voice-only mode: no visible text, voice bar is primary content
-                const isVoiceOnly = !!voiceData?.url && !displayContent;
                 return (
-                <div className={`relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
+                <div className="relative z-10 animate-fade-in">
                     {voiceData?.url ? (
                         <div className="max-w-[260px]">
                             <button
@@ -2112,6 +2158,7 @@ const MessageItem = React.memo(({
            prev.isSelected === next.isSelected &&
            prev.translationEnabled === next.translationEnabled &&
            prev.isShowingTarget === next.isShowingTarget &&
+           prev.translateDisplayMode === next.translateDisplayMode &&
            prev.avatarShape === next.avatarShape &&
            prev.avatarSize === next.avatarSize &&
            prev.avatarMode === next.avatarMode &&

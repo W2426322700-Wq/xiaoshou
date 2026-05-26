@@ -6,6 +6,7 @@ import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { safeResponseJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { processTextWithVoiceAssistant, stripParensPreservingTags, insertSpeechBreaks } from '../utils/minimaxTts';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 const PREVIEW_TEXT = '你好呀，这是捏出来的新声音，听听看喜不喜欢？';
@@ -198,11 +199,18 @@ const VoiceDesignerApp: React.FC = () => {
     const text = previewText.trim();
     if (!text) return addToast('请输入试听文本', 'error');
 
-    const payload = buildPayload(text);
-    if (!payload) return;
-
     setIsGenerating(true);
     try {
+      // VoiceDesignerApp 直接传 apiConfig，利用 cleanTextForTts 自带的语气助手
+      const { cleanTextForTts } = await import('../utils/minimaxTts');
+      const processedText = await cleanTextForTts(text, false, apiConfig);
+
+      const payload = buildPayload(processedText);
+      if (!payload) {
+        setIsGenerating(false);
+        return;
+      }
+
       const groupId = (apiConfig.minimaxGroupId || '').trim();
       const cacheKey = hashTtsParams({
         kind: 'minimax-t2a',

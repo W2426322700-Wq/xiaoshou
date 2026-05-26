@@ -5,6 +5,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { processTextWithVoiceAssistant, stripParensPreservingTags, insertSpeechBreaks as ttsInsertSpeechBreaks } from '../utils/minimaxTts';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
@@ -151,28 +152,7 @@ const convertNarrationCues = (raw: string) => {
 };
 /** 为 TTS 文本插入 MiniMax 原生停顿标签 <#秒数#>，让语音有自然停顿
  *  注意：停顿值不宜过大，过大会导致混合声线（timber_weights）在各段产生不同混合效果 */
-const insertSpeechBreaks = (text: string): string => {
-  if (!text) return '';
-  return text
-    // 省略号 → 短停顿（思考 / 犹豫）
-    .replace(/[…]{1,}/g, '…<#0.15#>')
-    .replace(/\.{3,}/g, '...<#0.15#>')
-    .replace(/。{2,}/g, '。<#0.15#>')
-    // 破折号 → 微停顿（话题转折）
-    .replace(/——/g, '——<#0.1#>')
-    .replace(/--/g, '--<#0.1#>')
-    // 句末标点 → 微停顿（句间呼吸）— 仅中文句号和感叹/问号
-    .replace(/([。！？])/g, '$1<#0.08#>')
-    // 英文句末标点不加停顿（TTS 自身已有节奏）
-    // 分号 → 不加停顿（太细碎）
-    // 清理多余的连续停顿标签（避免叠加）
-    .replace(/(<#[\d.]+#>[\s]*){2,}/g, (match) => {
-      const times = [...match.matchAll(/<#([\d.]+)#>/g)].map(m => parseFloat(m[1]));
-      const maxTime = Math.min(Math.max(...times), 0.2);
-      return `<#${maxTime}#>`;
-    })
-    .trim();
-};
+// 我们直接使用 minimaxTts 提供的 insertSpeechBreaks
 const VOICE_LANG_OPTIONS = [
   { value: '', label: '默认' },
   { value: 'en', label: 'English' },
@@ -505,7 +485,11 @@ const CallApp: React.FC = () => {
             const groupId = resolveGroupId();
             const { speech: greetingVoiceTag } = extractVoiceTag(greetingText);
             const cleanedGreetingVoice = greetingVoiceTag ? cleanVoiceTagContent(greetingVoiceTag) : '';
-            const speechText = insertSpeechBreaks(cleanedGreetingVoice || convertNarrationCues(greetingText));
+            let speechText = cleanedGreetingVoice || convertNarrationCues(greetingText);
+            // CallApp 直接传 apiConfig，利用 cleanTextForTts 自带的语气助手
+            const { cleanTextForTts } = await import('../utils/minimaxTts');
+            speechText = await cleanTextForTts(speechText, false, apiConfig);
+            
             const model = resolveModel();
             const ttsPayload: any = {
               model, text: speechText, stream: false, output_format: 'url',
@@ -680,7 +664,7 @@ const CallApp: React.FC = () => {
     }
     const systemPrompt = selectedChar
       ? buildCallPrompt(userName, selectedChar.name, ContextBuilder.buildCoreContext(selectedChar, userProfile, true), voiceLang || undefined)
-      : buildCallPrompt(userName, selectedChar?.name, undefined, voiceLang || undefined);
+      : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined);
     const messages = await buildHistoryMessages(input, skipDbId);
     const chatData = await safeFetchJson(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -766,7 +750,9 @@ const CallApp: React.FC = () => {
       const groupId = resolveGroupId();
       const { speech: voiceTagText } = extractVoiceTag(assistantText);
       const cleanedVoiceTag = voiceTagText ? cleanVoiceTagContent(voiceTagText) : '';
-      const speechText = insertSpeechBreaks(cleanedVoiceTag || convertNarrationCues(assistantText));
+      let speechText = cleanedVoiceTag || convertNarrationCues(assistantText);
+      const { cleanTextForTts } = await import('../utils/minimaxTts');
+      speechText = await cleanTextForTts(speechText, false, apiConfig);
       const model = resolveModel();
       if (!speechText.trim()) throw new Error('可朗读文本为空');
 
@@ -974,7 +960,9 @@ const CallApp: React.FC = () => {
           const groupId = resolveGroupId();
           const { speech: voiceTagText } = extractVoiceTag(rerolled);
           const cleanedVoiceTag = voiceTagText ? cleanVoiceTagContent(voiceTagText) : '';
-          const speechText = insertSpeechBreaks(cleanedVoiceTag || convertNarrationCues(rerolled));
+          let speechText = cleanedVoiceTag || convertNarrationCues(rerolled);
+          const { cleanTextForTts } = await import('../utils/minimaxTts');
+          speechText = await cleanTextForTts(speechText, false, apiConfig);
           if (speechText.trim()) {
             const model = resolveModel();
             const ttsPayload: any = {

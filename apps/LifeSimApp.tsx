@@ -955,9 +955,8 @@ const LifeSimApp: React.FC = () => {
             `}</style>
 
             {/* ── 顶部状态栏 (retro taskbar) ── */}
-            <div className="flex-shrink-0" style={{
+            <div className="flex-shrink-0 pt-[max(env(safe-area-inset-top),40px)]" style={{
                 background: `linear-gradient(180deg, ${pal.titlebar}ee, ${pal.accent}dd)`,
-                paddingTop: topSafePadding,
                 borderBottom: `2px solid ${pal.accent}`,
                 boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
             }}>

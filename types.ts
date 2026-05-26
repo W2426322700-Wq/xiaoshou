@@ -35,6 +35,18 @@ export enum AppID {
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
   QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
   HotNews = 'hot_news', // 热点 — 分时段召回的多平台热榜可视化（决定角色可能聊起的话题）
+  HisDaily = 'his_daily', // 他的日常 — 生成并记录角色的每日碎片事件
+}
+
+export interface HisDailyEvent {
+    id: string;             // 事件唯一ID
+    charId: string;         // 所属角色ID
+    date: string;           // YYYY-MM-DD
+    time: string;           // 事情发生的时间段，例如 "上午 10:00" 或者 "黄昏"
+    content: string;        // 事件的具体内容描述
+    worldbookIds: string[]; // 生成该事件时引用的世界书IDs
+    isMentioned: boolean;   // 是否已经在聊天上下文中被提起并消费掉
+    createdAt: number;      // 生成时间戳
 }
 
 export interface SystemLog {
@@ -352,6 +364,17 @@ export interface HotNewsSnapshot {
   items: HotNewsItem[];
   platforms: string[]; // 本次召回用的平台 key 列表
   fetchedAt: number;   // 拉取时间戳
+}
+
+export interface FavoritedMessage {
+  id: string;
+  messageId: number;
+  content: string;
+  role: 'user' | 'assistant' | 'system';
+  type: MessageType;
+  timestamp: number;
+  savedAt: number;
+  hasVoice?: boolean;
 }
 
 export interface MemoryFragment {
@@ -945,6 +968,7 @@ export interface CharacterProfile {
   systemPrompt: string;
   worldview?: string;
   memories: MemoryFragment[];
+  favorites?: FavoritedMessage[];
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
   
@@ -1100,6 +1124,12 @@ export interface CharacterProfile {
    */
   htmlModeEnabled?: boolean;
   htmlModeCustomPrompt?: string;
+
+  /**
+   * 线下描写模式（per-character）。
+   * 开启后，AI 将被要求以第三人称（带具体名字）进行动作、神态等描写，严禁使用“他/她”代词。
+   */
+  offlineActionEnabled?: boolean;
 
   /**
    * 思考过程展示（per-character / 会话级）。
@@ -1616,7 +1646,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'news_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'news_card' | 'video_card';
 
 export interface Message {
     id: number;
@@ -1751,6 +1781,9 @@ export interface FullBackupData {
     // 手账 Tracker（健康/生活打卡引擎）
     trackers?: Tracker[];
     trackerEntries?: TrackerEntry[];
+
+    // 他的日常事件
+    hisDailyEvents?: HisDailyEvent[];
 
     // Memory Palace 批次处理元数据
     memoryBatches?: any[];

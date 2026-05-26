@@ -60,6 +60,17 @@ export const ChatParser = {
             content = content.replace('[[ACTION:POKE]]', '').trim();
         }
 
+        // SHARE_VIDEO
+        const videoMatch = content.match(/\[\[ACTION:SHARE_VIDEO\s*\|\s*(.*?)\]\]/);
+        if (videoMatch) {
+            const desc = videoMatch[1].trim();
+            if (desc) {
+                await DB.saveMessage({ charId, role: 'assistant', type: 'video_card', content: desc });
+                addToast(`${charName} 给你分享了一个视频`, 'info');
+            }
+            content = content.replace(videoMatch[0], '').trim();
+        }
+
         // TRANSFER
         const transferMatch = content.match(/\[\[ACTION:TRANSFER:(\d+)\]\]/);
         if (transferMatch) {
@@ -234,6 +245,20 @@ export const ChatParser = {
         }
         content = content.replace(scheduleRegex, '').trim();
 
+        // EVENT_MENTIONED
+        const eventMentionedMatch = content.match(/\[\[EVENT_MENTIONED:\s*(.*?)\s*\]\]/);
+        if (eventMentionedMatch) {
+            const eventId = eventMentionedMatch[1].trim();
+            if (eventId) {
+                try {
+                    await DB.markHisDailyEventMentioned(eventId);
+                } catch (e) {
+                    console.error("Failed to mark his daily event as mentioned:", e);
+                }
+            }
+            content = content.replace(/\[\[EVENT_MENTIONED:.*?\]\]/g, '').trim();
+        }
+
         // RECALL tag removal (handling done in main loop logic, but cleaning here just in case)
         content = content.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
 
@@ -261,6 +286,7 @@ export const ChatParser = {
             .replace(/^\s*---\s*$/gm, '')
             .replace(/``+/g, '')
             .replace(/(^|\s)`(\s|$)/gm, '$1$2')
+            .replace(/\[\[EVENT_MENTIONED:.*?\]\]/g, '')
             .replace(/\[\[[\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
             .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')
